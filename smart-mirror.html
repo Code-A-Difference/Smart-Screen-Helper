@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart-Mirror: Universal Screen Engine</title>
+    <style>
+        :root {
+            --bg-color: #0c0c0e;
+            --tile-bg: rgba(24, 24, 28, 0.95);
+            --accent: #ffc107; 
+            --accent-glow: rgba(255, 193, 7, 0.4);
+            --text-color: #ffffff;
+            --assistant-blue: #00d2ff;
+            --assistant-glow: rgba(0, 210, 255, 0.5);
+        }
+
+        body {
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            height: 100vh;
+            box-sizing: border-box;
+            overflow: hidden; 
+        }
+
+        #app-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 100%;
+            height: 100%;
+            padding: 15px;
+            box-sizing: border-box;
+            gap: 15px;
+        }
+
+        #control-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            width: 100%;
+            max-width: 500px;
+            flex-shrink: 0;
+        }
+
+        .tile {
+            background-color: var(--tile-bg);
+            border: 2px solid rgba(38, 38, 43, 0.8);
+            border-radius: 14px;
+            padding: 18px 10px;
+            text-align: center;
+            font-size: 1.6rem; 
+            font-weight: 900;
+            text-transform: uppercase;
+            cursor: pointer;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            user-select: none;
+            backdrop-filter: blur(8px);
+            transition: all 0.15s ease;
+        }
+
+        .tile[data-type="zoom"] { color: #00d2ff; }
+        .tile[data-type="contrast"] { color: #ffffff; }
+        .tile[data-type="freeze"] { color: #ffc107; }
+        .tile[data-type="fullscreen"] { color: #00ffaa; }
+        .tile[data-type="reset"] { color: #aaaaaa; }
+
+        .tile.active {
+            background-color: rgba(34, 34, 42, 0.9);
+            border-color: var(--accent);
+            transform: scale(0.93);
+            box-shadow: 0 0 15px var(--accent-glow);
+        }
+
+        #view-window {
+            width: 100%;
+            max-width: 500px;
+            flex-grow: 1; 
+            margin-bottom: 75px; 
+            border: 5px solid #ffffff;
+            border-radius: 24px;
+            overflow: hidden;
+            position: relative;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.7);
+            background-color: #000;
+            transition: all 0.2s ease-in-out;
+        }
+
+        /* VIRTUAL FULLSCREEN OVERRIDE: Safe from browser security restrictions */
+        #view-window.virtual-fullscreen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw !important;
+            height: 100vh !important;
+            max-width: 100vw !important;
+            max-height: 100vh !important;
+            margin: 0 !important;
+            border: none !important;
+            border-radius: 0 !important;
+            z-index: 99999;
+        }
+
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform-origin: center center;
+            transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), filter 0.3s ease;
+        }
+
+        .inverted { filter: invert(1) contrast(1.4); }
+        .grayscale { filter: grayscale(1) contrast(1.3); }
+
+        #footer-panel {
+            position: fixed;
+            bottom: 20px;
+            width: 100%;
+            display: flex;
+            justify-content: center;
+            z-index: 90;
+        }
+
+        #help-trigger-btn {
+            background-color: var(--tile-bg);
+            border: 1px solid #3a3a42;
+            color: #dddddd;
+            padding: 12px 24px;
+            border-radius: 30px;
+            font-size: 1.1rem;
+            font-weight: 700;
+            cursor: pointer;
+            backdrop-filter: blur(8px);
+            box-shadow: 0 4px 10px rgba(0,0,0,0.4);
+        }
+
+        #assistant-overlay {
+            position: fixed;
+            top: -140px; 
+            left: 50%;
+            transform: translateX(-50%);
+            width: 92%;
+            max-width: 420px;
+            background: linear-gradient(135deg, #0e0e12, #181822);
+            border: 2px solid var(--assistant-blue);
+            border-radius: 25px;
+            padding: 18px 25px;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            box-sizing: border-box;
+            box-shadow: 0 15px 35px var(--assistant-glow);
+            z-index: 100000; /* Stays visual above virtual viewport layers */
+            opacity: 0;
+            transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.15);
+        }
+
+        #assistant-overlay.active {
+            top: 20px;
+            opacity: 1;
+        }
+
+        #assistant-orb {
+            width: 45px;
+            height: 45px;
+            border-radius: 50%;
+            background: linear-gradient(45deg, #00d2ff, #7000ff);
+            box-shadow: 0 0 15px var(--assistant-blue);
+            animation: orbBreathe 1.2s infinite ease-in-out;
+        }
+
+        #assistant-text-box {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+
+        #assistant-status {
+            font-size: 0.9rem;
+            color: var(--assistant-blue);
+            text-transform: uppercase;
+            font-weight: 800;
+            letter-spacing: 1px;
+            margin: 0;
+        }
+
+        #assistant-speech-preview {
+            font-size: 1.1rem;
+            color: #ffffff;
+            font-weight: 600;
+            margin: 4px 0 0 0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 270px;
+        }
+
+        @keyframes orbBreathe {
+            0% { transform: scale(1); box-shadow: 0 0 12px var(--assistant-blue); }
+            50% { transform: scale(1.08); box-shadow: 0 0 22px #7000ff; }
+            100% { transform: scale(1); box-shadow: 0 0 12px var(--assistant-blue); }
+        }
+
+        .help-drawer {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.85);
+            backdrop-filter: blur(6px);
+            z-index: 200000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+        }
+
+        .help-drawer.visible { opacity: 1; pointer-events: auto; }
+        .help-content { background-color: #16161a; border: 2px solid #2d2d35; border-radius: 20px; width: 90%; max-width: 460px; padding: 25px; box-sizing: border-box; max-height: 90vh; overflow-y: auto; }
+        .command-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #222226; font-size: 0.95rem; }
+        .command-phrase { color: #00d2ff; font-weight: bold; text-align: right; max-width: 60%; }
+        #close-help-btn { width: 100%; padding: 14px; margin-top: 20px; background-color: #26262b; color: #fff; border: none; border-radius: 10px; font-weight: bold; cursor: pointer; }
+    </style>
+</head>
+<body>
+
+    <div id="app-container">
+        <div id="control-grid">
+            <div id="tile-zoom" class="tile" data-type="zoom">ZOOM+</div>
+            <div id="tile-shrink" class="tile" data-type="zoom">ZOOM-</div>
+            <div id="tile-contrast" class="tile" data-type="contrast">FLIP</div>
+            <div id="tile-fullscreen" class="tile" data-type="fullscreen">WIDE</div>
+            <div id="tile-freeze" class="tile" data-type="freeze">HOLD</div>
+            <div id="tile-reset" class="tile" data-type="reset">RESET</div>
+        </div>
+
+        <div id="view-window">
+            <video id="webcam" autoplay playsinline></video>
+        </div>
+    </div>
+
+    <div id="assistant-overlay">
+        <div id="assistant-orb"></div>
+        <div id="assistant-text-box">
+            <p id="assistant-status">Listening...</p>
+            <p id="assistant-speech-preview">Speak command now...</p>
+        </div>
+    </div>
+
+    <div id="footer-panel">
+        <button id="help-trigger-btn">📋 Show Voice Commands</button>
+    </div>
+
+    <div id="help-modal" class="help-drawer">
+        <div class="help-content">
+            <h2 style="margin-top:0; color:var(--accent);">🎙️ Universal Voice Guide</h2>
+            <p style="background:rgba(255,193,7,0.15); padding:10px; border-radius:8px; color:var(--accent); text-align:center; font-weight:bold; margin-bottom:15px; font-size:0.9rem;">Wake word: "Hey Mirror..." or "Mirror..."</p>
+            <div class="command-row"><span>Expand Screen:</span><span class="command-phrase">"Fullscreen", "Maximize", "Wide Screen"</span></div>
+            <div class="command-row"><span>Minimize Screen:</span><span class="command-phrase">"Exit Fullscreen", "Minimize", "Window"</span></div>
+            <div class="command-row"><span>Multi-Zoom In:</span><span class="command-phrase">"Zoom in 3 times", "Bigger twice"</span></div>
+            <div class="command-row"><span>Multi-Zoom Out:</span><span class="command-phrase">"Zoom out 4 times", "Smaller twice"</span></div>
+            <div class="command-row"><span>Color Filter Cycle:</span><span class="command-phrase">"Contrast", "Flip", "Color"</span></div>
+            <div class="command-row"><span>Freeze Video:</span><span class="command-phrase">"Freeze", "Hold", "Pause"</span></div>
+            <div class="command-row"><span>Unfreeze Video:</span><span class="command-phrase">"Release", "Unhold", "Play"</span></div>
+            <button id="close-help-btn">Close Guide</button>
+        </div>
+    </div>
+
+    <script>
+        const video = document.getElementById('webcam');
+        const viewWindow = document.getElementById('view-window');
+        
+        const tileZoom = document.getElementById('tile-zoom');
+        const tileShrink = document.getElementById('tile-shrink');
+        const tileContrast = document.getElementById('tile-contrast');
+        const tileFullscreen = document.getElementById('tile-fullscreen');
+        const tileFreeze = document.getElementById('tile-freeze');
+        const tileReset = document.getElementById('tile-reset');
+
+        const assistantOverlay = document.getElementById('assistant-overlay');
+        const assistantStatus = document.getElementById('assistant-status');
+        const assistantPreview = document.getElementById('assistant-speech-preview');
+
+        const helpModal = document.getElementById('help-modal');
+        const helpTriggerBtn = document.getElementById('help-trigger-btn');
+        const closeHelpBtn = document.getElementById('close-help-btn');
+
+        let currentZoom = 1;
+        let isFrozen = false;
+        let contrastMode = 0; 
+        
+        let recognition = null;
+        let isAssistantAwake = false;
+        let processingWindowTimer = null;
+        let currentCommandText = "";
+        let blockWakeWord = false;
+
+        async function startCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } }
+                });
+                video.srcObject = stream;
+            } catch (err) {
+                console.error(err);
+                speakResponse("Camera link failure.");
+            }
+        }
+
+        // PHYSICAL BINDINGS
+        tileZoom.addEventListener('click', () => handleAction(tileZoom, () => { if (currentZoom < 8) currentZoom += 1; applyTransforms(); }));
+        tileShrink.addEventListener('click', () => handleAction(tileShrink, () => { if (currentZoom > 1) currentZoom -= 1; applyTransforms(); }));
+        tileContrast.addEventListener('click', () => handleAction(tileContrast, toggleContrastMode));
+        tileFullscreen.addEventListener('click', () => handleAction(tileFullscreen, toggleVirtualFullscreen));
+        tileFreeze.addEventListener('click', () => handleAction(tileFreeze, toggleFreezeMode));
+        tileReset.addEventListener('click', () => handleAction(tileReset, resetAllSettings));
+
+        helpTriggerBtn.addEventListener('click', () => helpModal.classList.add('visible'));
+        closeHelpBtn.addEventListener('click', () => helpModal.classList.remove('visible'));
+
+        function playChime(type) {
+            if (!(window.AudioContext || window.webkitAudioContext)) return;
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            
+            if (type === 'appear') {
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(440, audioCtx.currentTime); 
+                osc.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.15); 
+                gain.gain.setValueAtTime(0.06, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.00001, audioCtx.currentTime + 0.15);
+                osc.connect(gain); gain.connect(audioCtx.destination);
+                osc.start(); osc.stop(audioCtx.currentTime + 0.15);
+            } 
+            else if (type === 'success') {
+                [659.25, 783.99].forEach((freq, index) => {
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(freq, audioCtx.currentTime + (index * 0.05));
+                    gain.gain.setValueAtTime(0.05, audioCtx.currentTime + (index * 0.05));
+                    gain.gain.exponentialRampToValueAtTime(0.00001, audioCtx.currentTime + (index * 0.05) + 0.05);
+                    osc.connect(gain); gain.connect(audioCtx.destination);
+                    osc.start(); osc.stop(audioCtx.currentTime + (index * 0.05) + 0.05);
+                });
+            }
+        }
+
+        function initNaturalLanguageEngine() {
+            const SpeechRecognition = window.webkitSpeechRecognition || window.SpeechRecognition;
+            if (!SpeechRecognition) return;
+
+            recognition = new SpeechRecognition();
+            recognition.continuous = true; 
+            recognition.interimResults = true; 
+            recognition.lang = 'en-US';
+
+            recognition.onend = () => {
+                recognition.start();
+            };
+
+            recognition.onresult = (event) => {
+                let fullChunkText = "";
+                for (let i = event.resultIndex; i < event.results.length; ++i) {
+                    fullChunkText += event.results[i][0].transcript;
+                }
+
+                const liveSentence = fullChunkText.toLowerCase().trim();
+                
+                if (liveSentence.includes("mirror") && !isAssistantAwake && !blockWakeWord) {
+                    isAssistantAwake = true;
+                    
+                    playChime('appear');
+                    assistantStatus.innerText = "Listening...";
+                    assistantPreview.innerText = "Say command...";
+                    assistantOverlay.classList.add('active'); 
+
+                    processingWindowTimer = setTimeout(() => {
+                        finalizeAndExecuteCommand();
+                    }, 3500); 
+                }
+
+                if (isAssistantAwake) {
+                    const stringSegments = liveSentence.split("mirror");
+                    currentCommandText = stringSegments[stringSegments.length - 1] || "";
+                    
+                    if (currentCommandText.trim().length > 0) {
+                        assistantPreview.innerText = `"${currentCommandText.trim()}"`;
+                    }
+                }
+            };
+            
+            recognition.start();
+        }
+
+        // HELPER: Parses text blocks to extract numbers/multipliers
+        function parseMultiplier(text) {
+            if (text.includes("twice") || text.includes(" to ")) return 2;
+            if (text.includes("three") || text.includes(" 3 ")) return 3;
+            if (text.includes("four") || text.includes(" 4 ")) return 4;
+            if (text.includes("five") || text.includes(" 5 ")) return 5;
+            return 1; 
+        }
+
+        function finalizeAndExecuteCommand() {
+            if (!isAssistantAwake) return;
+            blockWakeWord = true;
+
+            let matchExecuted = false;
+            const cleanCommand = currentCommandText.trim();
+
+            if (cleanCommand.length > 0) {
+                // 1. FULLSCREEN OVER CSS LAYER ACTIONS
+                if (cleanCommand.includes("exit fullscreen") || cleanCommand.includes("minimize") || cleanCommand.includes("window") || cleanCommand.includes("unfullscreen") || cleanCommand.includes("close fullscreen")) {
+                    if (viewWindow.classList.contains('virtual-fullscreen')) {
+                        handleAction(tileFullscreen, () => { toggleVirtualFullscreen(); });
+                        matchExecuted = true;
+                    }
+                }
+                else if (cleanCommand.includes("fullscreen") || cleanCommand.includes("maximize") || cleanCommand.includes("wide screen") || cleanCommand.includes("full screen") || cleanCommand.includes("wide")) {
+                    if (!viewWindow.classList.contains('virtual-fullscreen')) {
+                        handleAction(tileFullscreen, () => { toggleVirtualFullscreen(); });
+                        matchExecuted = true;
+                    }
+                }
+                // 2. DYNAMIC MULTI-ZOOM IN
+                else if (cleanCommand.includes("zoom in") || cleanCommand.includes("bigger") || cleanCommand.includes("enlarge") || cleanCommand.includes("more")) {
+                    const iterations = parseMultiplier(cleanCommand);
+                    handleAction(tileZoom, () => { 
+                        for (let k = 0; k < iterations; k++) {
+                            if (currentZoom < 8) currentZoom += 1;
+                        }
+                        applyTransforms(); 
+                    });
+                    matchExecuted = true;
+                }
+                // 3. DYNAMIC MULTI-ZOOM OUT
+                else if (cleanCommand.includes("zoom out") || cleanCommand.includes("smaller") || cleanCommand.includes("shrink") || cleanCommand.includes("less")) {
+                    const iterations = parseMultiplier(cleanCommand);
+                    handleAction(tileShrink, () => { 
+                        for (let k = 0; k < iterations; k++) {
+                            if (currentZoom > 1) currentZoom -= 1;
+                        }
+                        applyTransforms(); 
+                    });
+                    matchExecuted = true;
+                }
+                // 4. COLOR MODES
+                else if (cleanCommand.includes("invert") || cleanCommand.includes("negative")) {
+                    handleAction(tileContrast, () => { contrastMode = 1; setFilterState(); });
+                    matchExecuted = true;
+                }
+                else if (cleanCommand.includes("gray") || cleanCommand.includes("black and white")) {
+                    handleAction(tileContrast, () => { contrastMode = 2; setFilterState(); });
+                    matchExecuted = true;
+                }
+                else if (cleanCommand.includes("contrast") || cleanCommand.includes("flip") || cleanCommand.includes("color")) {
+                    handleAction(tileContrast, toggleContrastMode);
+                    matchExecuted = true;
+                }
+                // 5. FREEZE CONTROL HOOKS
+                else if (cleanCommand.includes("release") || cleanCommand.includes("unhold") || cleanCommand.includes("play") || cleanCommand.includes("resume")) {
+                    if (isFrozen) {
+                        handleAction(tileFreeze, toggleFreezeMode);
+                        matchExecuted = true;
+                    }
+                }
+                else if (cleanCommand.includes("freeze") || cleanCommand.includes("pause") || cleanCommand.includes("hold")) {
+                    if (!isFrozen) {
+                        handleAction(tileFreeze, toggleFreezeMode);
+                        matchExecuted = true;
+                    }
+                }
+                // 6. DEFAULTS SYSTEM RESTORE
+                else if (cleanCommand.includes("reset") || cleanCommand.includes("normal") || cleanCommand.includes("clear")) {
+                    handleAction(tileReset, resetAllSettings);
+                    matchExecuted = true;
+                }
+            }
+
+            if (matchExecuted) {
+                playChime('success');
+            }
+            
+            assistantOverlay.classList.remove('active');
+            isAssistantAwake = false;
+            currentCommandText = "";
+
+            setTimeout(() => {
+                blockWakeWord = false;
+            }, 1000);
+        }
+
+        function handleAction(tileElement, actionCallback) {
+            tileElement.classList.add('active');
+            setTimeout(() => tileElement.classList.remove('active'), 220);
+            actionCallback();
+        }
+
+        function speakResponse(text) {
+            if ('speechSynthesis' in window) {
+                window.speechSynthesis.cancel();
+                const utterance = new SpeechSynthesisUtterance(text);
+                utterance.rate = 1.15;
+                window.speechSynthesis.speak(utterance);
+            }
+        }
+
+        function applyTransforms() { video.style.transform = `scale(${currentZoom})`; }
+
+        function setFilterState() {
+            video.classList.remove('inverted', 'grayscale');
+            if (contrastMode === 1) { video.classList.add('inverted'); tileContrast.innerText = "INVERT"; }
+            else if (contrastMode === 2) { video.classList.add('grayscale'); tileContrast.innerText = "GRAY"; }
+            else { tileContrast.innerText = "NORMAL"; }
+        }
+
+        function toggleContrastMode() {
+            contrastMode = (contrastMode + 1) % 3;
+            setFilterState();
+        }
+
+        function toggleVirtualFullscreen() {
+            viewWindow.classList.toggle('virtual-fullscreen');
+            if (viewWindow.classList.contains('virtual-fullscreen')) {
+                tileFullscreen.innerText = "EXIT";
+            } else {
+                tileFullscreen.innerText = "WIDE";
+            }
+        }
+
+        function toggleFreezeMode() {
+            if (!isFrozen) { video.pause(); isFrozen = true; tileFreeze.innerText = "RELEASE"; }
+            else { video.play(); isFrozen = false; tileFreeze.innerText = "HOLD"; }
+        }
+
+        function resetAllSettings() {
+            currentZoom = 1; contrastMode = 0; isFrozen = false;
+            video.play();
+            setFilterState();
+            viewWindow.classList.remove('virtual-fullscreen');
+            tileFullscreen.innerText = "WIDE"; tileContrast.innerText = "FLIP"; tileFreeze.innerText = "HOLD";
+            applyTransforms();
+            speakResponse("Reset.");
+        }
+
+        window.addEventListener('load', () => {
+            startCamera();
+            initNaturalLanguageEngine();
+        });
+    </script>
+</body>
+</html>
